@@ -17,6 +17,7 @@
 package org.apache.coyote.http2;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Assert;
 import org.junit.Test;
@@ -129,6 +130,33 @@ public class TestHpack {
         HpackDecoder decoder = new HpackDecoder();
         decoder.setHeaderEmitter(new HeadersListener(headers2));
         decoder.decode(output);
+    }
+
+
+    @Test
+    public void testEmitHeaderHoldsStreamEmitterLock() throws Exception {
+        MimeHeaders headers = new MimeHeaders();
+        headers.setValue("x-test").setString("value");
+        ByteBuffer output = ByteBuffer.allocate(512);
+        HpackEncoder encoder = new HpackEncoder();
+        encoder.encode(headers, output);
+        output.flip();
+
+        HpackDecoder decoder = new HpackDecoder();
+        MimeHeaders headers2 = new MimeHeaders();
+        AtomicReference<Boolean> lockHeld = new AtomicReference<>();
+        decoder.setHeaderEmitter(new HeadersListener(headers2) {
+            @Override
+            public void emitHeader(String name, String value) {
+                lockHeld.set(Boolean.valueOf(decoder.getStreamEmitterLock().isHeldByCurrentThread()));
+                super.emitHeader(name, value);
+            }
+        });
+        decoder.decode(output);
+
+        Assert.assertEquals("value", headers2.getHeader("x-test"));
+        Assert.assertEquals(Boolean.TRUE, lockHeld.get());
+        Assert.assertFalse(decoder.getStreamEmitterLock().isLocked());
     }
 
 
